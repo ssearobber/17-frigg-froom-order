@@ -34,6 +34,7 @@ async function googleProfitSheet(productId) {
       googleProfitObject.peculiarities = rows[i].peculiarities;
       googleProfitObject.productURL = rows[i].productURL;
       googleProfitObject.shopifyProfit = rows[i].shopifyProfit.replace(/[^0-9]/g, '');
+      googleProfitObject.shopifyProfitRate = rows[i].shopifyProfitRate;
     }
   }
 

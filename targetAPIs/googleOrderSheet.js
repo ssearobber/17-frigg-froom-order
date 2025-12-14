@@ -87,6 +87,7 @@ async function googleOrderSheet(orderID, orderName) {
             rows[i].productProfit = orderDetailObjectArray[j].productProfit;
             rows[i].productDeadlineDate = orderDetailObjectArray[j].productDeadlineDate;
             rows[i].productId = orderDetailObjectArray[j].productId;
+            rows[i].productProfitRate = orderDetailObjectArray[j].shopifyProfitRate;
             rows[i].save();
             break;
           }
