@@ -28,6 +28,7 @@ async function shopifyOrderDetail(orderID) {
           console.log('구글 시트(利益計算)에서 정보 취득');
           let googleProfitObject = await googleProfitSheet(orderDetailObject.productId);
           console.log('구글 시트(利益計算)에서 정보 취득 종료');
+          console.log('googleProfitObject:', JSON.stringify(googleProfitObject, null, 2));
 
           // 나머지 속성 설정
           orderDetailObject.rowNum = googleProfitObject.rowNum;
@@ -35,6 +36,7 @@ async function shopifyOrderDetail(orderID) {
           orderDetailObject.productProfit = googleProfitObject.shopifyProfit * orderDetailObject.productCount;
           orderDetailObject.orderID = orderID;
           orderDetailObject.peculiarities = googleProfitObject.peculiarities;
+          orderDetailObject.productProfitRate = googleProfitObject.shopifyProfitRate;
 
           console.log('주문정보 상세 종료.');
 

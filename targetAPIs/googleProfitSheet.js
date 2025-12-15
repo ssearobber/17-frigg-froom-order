@@ -35,6 +35,11 @@ async function googleProfitSheet(productId) {
       googleProfitObject.productURL = rows[i].productURL;
       googleProfitObject.shopifyProfit = rows[i].shopifyProfit.replace(/[^0-9]/g, '');
       googleProfitObject.shopifyProfitRate = rows[i].shopifyProfitRate;
+      
+      console.log(`상품 ID ${productId} 찾음:`);
+      console.log(`- Row: ${i + 2}`);
+      console.log(`- shopifyProfitRate 원본 값:`, rows[i].shopifyProfitRate);
+      console.log(`- shopifyProfitRate 타입:`, typeof rows[i].shopifyProfitRate);
     }
   }
 
