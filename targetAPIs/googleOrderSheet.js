@@ -1,55 +1,39 @@
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { shopifyOrderDetail } = require('./shopifyOrderDetail');
 
-// Google Sheets API 속도 제한을 위한 지연 함수
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// API 호출 간격 제어 (1초 간격)
-const API_CALL_DELAY = 1000;
+// 프로세스 실행 동안 시트 연결과 rows를 캐싱하여 반복 API 호출 방지
+let _orderSheet = null;
+let _orderRows = null;
+
+async function _initOrderSheet() {
+  if (_orderSheet && _orderRows) return;
+
+  if (!process.env.GOOGLE_SPREAD_ID) throw new Error('GOOGLE_SPREAD_ID 환경변수가 설정되지 않았습니다.');
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL) throw new Error('GOOGLE_SERVICE_ACCOUNT_EMAIL 환경변수가 설정되지 않았습니다.');
+  if (!process.env.GOOGLE_PRIVATE_KEY) throw new Error('GOOGLE_PRIVATE_KEY 환경변수가 설정되지 않았습니다.');
+  if (!process.env.GOOGLE_ORDER_SHEET_ID) throw new Error('GOOGLE_ORDER_SHEET_ID 환경변수가 설정되지 않았습니다.');
+
+  const doc = new GoogleSpreadsheet(process.env.GOOGLE_SPREAD_ID);
+  await doc.useServiceAccountAuth({
+    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    private_key: process.env.GOOGLE_PRIVATE_KEY,
+  });
+  await doc.loadInfo();
+  _orderSheet = doc.sheetsById[process.env.GOOGLE_ORDER_SHEET_ID];
+  _orderRows = await _orderSheet.getRows();
+}
 
 async function googleOrderSheet(orderID, orderName) {
-  // API 호출 제한을 위한 지연
-  await delay(API_CALL_DELAY);
-  
   try {
-    // 환경변수 확인
-    if (!process.env.GOOGLE_SPREAD_ID) {
-      throw new Error('GOOGLE_SPREAD_ID 환경변수가 설정되지 않았습니다.');
-    }
-    if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL) {
-      throw new Error('GOOGLE_SERVICE_ACCOUNT_EMAIL 환경변수가 설정되지 않았습니다.');
-    }
-    if (!process.env.GOOGLE_PRIVATE_KEY) {
-      throw new Error('GOOGLE_PRIVATE_KEY 환경변수가 설정되지 않았습니다.');
-    }
-    if (!process.env.GOOGLE_ORDER_SHEET_ID) {
-      throw new Error('GOOGLE_ORDER_SHEET_ID 환경변수가 설정되지 않았습니다.');
-    }
+    // 첫 호출 시에만 API 요청, 이후는 캐시 사용
+    await _initOrderSheet();
 
     console.log(`Google Sheets 처리 시작: 주문 ID ${orderID}`);
-    
-    // 시트 url중 값
-    // Initialize the sheet - doc ID is the long id in the sheets URL
-    const doc = new GoogleSpreadsheet(process.env.GOOGLE_SPREAD_ID || googleSpreadId);
 
-  // GOOGLE_API_KEY로 구글API다루는 방법. 읽는것만 가능.
-  // doc.useApiKey(process.env.GOOGLE_API_KEY);
-
-  // GOOGLE_SERVICE로 구글API다루는 방법. 편집 가능.
-  // Initialize Auth - see more available options at https://theoephraim.github.io/node-google-spreadsheet/#/getting-started/authentication
-  await doc.useServiceAccountAuth({
-    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || googleServiceAccountEmail,
-    private_key: process.env.GOOGLE_PRIVATE_KEY || googlePrivateKey,
-  });
-
-  // loads document properties and worksheets
-  await doc.loadInfo();
-
-  // the buymaList 시트ID로 시트취득
-  const sheet = doc.sheetsById[process.env.GOOGLE_ORDER_SHEET_ID || googleOrderSheetId];
-
-  // rows 취득
-  const rows = await sheet.getRows();
+  // rows 취득 (캐시된 배열 사용)
+  const rows = _orderRows;
 
   // 구글 시트(受注list)에 주문ID가 존재하는지 확인
   let orderDetailObjectArray;
@@ -117,20 +101,12 @@ async function googleOrderSheet(orderID, orderName) {
   }
 }
 
-// 재시도용 함수 (간단화된 버전)
+// 재시도용 함수 — 캐시된 연결 재사용
 async function googleOrderSheetRetry(orderID, orderName) {
   console.log(`재시도 함수 실행: 주문 ID ${orderID}`);
-  
-  const doc = new GoogleSpreadsheet(process.env.GOOGLE_SPREAD_ID || googleSpreadId);
-  
-  await doc.useServiceAccountAuth({
-    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || googleServiceAccountEmail,
-    private_key: process.env.GOOGLE_PRIVATE_KEY || googlePrivateKey,
-  });
 
-  await doc.loadInfo();
-  const sheet = doc.sheetsById[process.env.GOOGLE_ORDER_SHEET_ID || googleOrderSheetId];
-  const rows = await sheet.getRows();
+  // _initOrderSheet()는 이미 완료된 상태이므로 캐시된 rows 사용
+  const rows = _orderRows;
 
   // 간단한 중복 확인만 수행
   for (let i = 1; i < rows.length; i++) {
@@ -139,9 +115,8 @@ async function googleOrderSheetRetry(orderID, orderName) {
       return;
     }
   }
-  
+
   console.log(`재시도: 새로운 주문 처리 필요 (ID: ${orderID})`);
-  // 여기서는 간단히 로그만 남기고 실제 처리는 나중에 수행
 }
 
 module.exports.googleOrderSheet = googleOrderSheet;

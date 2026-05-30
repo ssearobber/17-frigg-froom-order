@@ -1,45 +1,40 @@
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 
-async function googleProfitSheet(productId) {
-  // 시트 url중 값
-  // Initialize the sheet - doc ID is the long id in the sheets URL
-  const doc = new GoogleSpreadsheet(process.env.GOOGLE_SPREAD_ID || googleSpreadId);
+// 프로세스 실행 동안 rows를 캐싱하여 반복 API 호출 방지
+let _profitRows = null;
 
-  // GOOGLE_API_KEY로 구글API다루는 방법. 읽는것만 가능.
-  // doc.useApiKey(process.env.GOOGLE_API_KEY);
-
-  // GOOGLE_SERVICE로 구글API다루는 방법. 편집 가능.
-  // Initialize Auth - see more available options at https://theoephraim.github.io/node-google-spreadsheet/#/getting-started/authentication
+async function _initProfitRows() {
+  if (_profitRows) return;
+  const doc = new GoogleSpreadsheet(process.env.GOOGLE_SPREAD_ID);
   await doc.useServiceAccountAuth({
-    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || googleServiceAccountEmail,
-    private_key: process.env.GOOGLE_PRIVATE_KEY || googlePrivateKey,
+    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    private_key: process.env.GOOGLE_PRIVATE_KEY,
   });
-
-  // loads document properties and worksheets
   await doc.loadInfo();
+  const sheet = doc.sheetsById[process.env.GOOGLE_PROFIT_SHEET_ID];
+  _profitRows = await sheet.getRows();
+}
 
-  // the buymaList 시트ID로 시트취득
-  const sheet = doc.sheetsById[process.env.GOOGLE_PROFIT_SHEET_ID || googleProfitSheetId];
-
-  // rows 취득
-  const rows = await sheet.getRows();
+async function googleProfitSheet(productId) {
+  // 첫 호출 시에만 API 요청, 이후는 캐시 사용
+  await _initProfitRows();
 
   // 해당 상품ID의 row번호, url을 취득
   let googleProfitObject = {};
-  for (i = 1; i < rows.length; i++) {
-    if (!rows[i].shopifyProductId) continue;
+  for (i = 1; i < _profitRows.length; i++) {
+    if (!_profitRows[i].shopifyProductId) continue;
     // 해당 상품ID가 존재하는 row
-    if (rows[i].shopifyProductId.match(/\d{13}/g) == productId) {
+    if (_profitRows[i].shopifyProductId.match(/\d{13}/g) == productId) {
       googleProfitObject.rowNum = i + 2;
-      googleProfitObject.peculiarities = rows[i].peculiarities;
-      googleProfitObject.productURL = rows[i].productURL;
-      googleProfitObject.shopifyProfit = rows[i].shopifyProfit.replace(/[^0-9]/g, '');
-      googleProfitObject.shopifyProfitRate = rows[i].shopifyProfitRate;
-      
+      googleProfitObject.peculiarities = _profitRows[i].peculiarities;
+      googleProfitObject.productURL = _profitRows[i].productURL;
+      googleProfitObject.shopifyProfit = _profitRows[i].shopifyProfit.replace(/[^0-9]/g, '');
+      googleProfitObject.shopifyProfitRate = _profitRows[i].shopifyProfitRate;
+
       console.log(`상품 ID ${productId} 찾음:`);
       console.log(`- Row: ${i + 2}`);
-      console.log(`- shopifyProfitRate 원본 값:`, rows[i].shopifyProfitRate);
-      console.log(`- shopifyProfitRate 타입:`, typeof rows[i].shopifyProfitRate);
+      console.log(`- shopifyProfitRate 원본 값:`, _profitRows[i].shopifyProfitRate);
+      console.log(`- shopifyProfitRate 타입:`, typeof _profitRows[i].shopifyProfitRate);
     }
   }
 
