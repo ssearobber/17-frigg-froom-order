@@ -31,7 +31,7 @@ async function _initOrderSheet() {
   const doc = new GoogleSpreadsheet(process.env.GOOGLE_SPREAD_ID);
   await doc.useServiceAccountAuth({
     client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY,
+    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
   });
   await doc.loadInfo();
   _orderSheet = doc.sheetsById[process.env.GOOGLE_ORDER_SHEET_ID];
