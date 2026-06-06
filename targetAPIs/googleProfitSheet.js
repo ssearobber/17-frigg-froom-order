@@ -5,7 +5,7 @@ let _profitRows = null;
 
 async function _initProfitRows() {
   if (_profitRows) return;
-  const doc = new GoogleSpreadsheet(process.env.GOOGLE_SPREAD_ID);
+  const doc = new GoogleSpreadsheet(process.env.GOOGLE_PROFIT_SPREAD_ID);
   await doc.useServiceAccountAuth({
     client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
     private_key: process.env.GOOGLE_PRIVATE_KEY,
@@ -26,6 +26,7 @@ async function googleProfitSheet(productId) {
     // 해당 상품ID가 존재하는 row
     if (_profitRows[i].shopifyProductId.match(/\d{13}/g) == productId) {
       googleProfitObject.rowNum = i + 2;
+      googleProfitObject['1acSku'] = _profitRows[i]['1acSku'];
       googleProfitObject.peculiarities = _profitRows[i].peculiarities;
       googleProfitObject.productURL = _profitRows[i].productURL;
       googleProfitObject.shopifyProfit = _profitRows[i].shopifyProfit.replace(/[^0-9]/g, '');

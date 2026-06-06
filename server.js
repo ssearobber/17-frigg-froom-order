@@ -20,17 +20,16 @@ async function main() {
       process.exit(0);
     }
 
-    console.log(`${orderIDArray.orders.length}개의 주문을 처리합니다.`);
+    // 오래된 주문부터 위 행에 기록되도록 오름차순 정렬
+    const orders = [...orderIDArray.orders].reverse();
 
-    //TODO: 여기서 쇼피파이 주문데이터 전체를 불러오기. await shopifyOrderDetail(orderID);
+    console.log(`${orders.length}개의 주문을 처리합니다.`);
 
-    // 구글 스프레드 시트(受注list)에서 주문ID가 있는지 확인
-    // API 호출 최적화: 순차 처리로 변경하여 동시 요청 방지
     console.log('주문들을 순차적으로 처리합니다 (API 할당량 보호)...');
-    
-    for (let i = 0; i < orderIDArray.orders.length; i++) {
-      const orderIDObject = orderIDArray.orders[i];
-      console.log(`[${i + 1}/${orderIDArray.orders.length}] 주문 처리 중: ${orderIDObject.name} (ID: ${orderIDObject.id})`);
+
+    for (let i = 0; i < orders.length; i++) {
+      const orderIDObject = orders[i];
+      console.log(`[${i + 1}/${orders.length}] 주문 처리 중: ${orderIDObject.name} (ID: ${orderIDObject.id})`);
       
       try {
         await googleOrderSheet(orderIDObject.id, orderIDObject.name);
