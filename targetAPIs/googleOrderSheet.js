@@ -76,12 +76,19 @@ async function _writeOrderRow(orderDetail) {
     const idx = _orderSheet.headerValues.indexOf(name);
     if (idx !== -1) _orderSheet.getCell(targetRow0, idx).value = value ?? '';
   };
+  // 숫자형 필드: string으로 넣으면 Sheets가 ' apostrophe prefix를 붙이므로 Number로 변환
+  const setNum = (name, value) => {
+    const idx = _orderSheet.headerValues.indexOf(name);
+    if (idx === -1) return;
+    const num = Number(value);
+    _orderSheet.getCell(targetRow0, idx).value = value !== '' && value != null && !isNaN(num) ? num : (value ?? '');
+  };
 
   setVal('orderID',          String(orderDetail.orderID));
   setVal('1acSku',           orderDetail['1acSku']        || '');
   setVal('peculiarities',    orderDetail.peculiarities    || '');
   setVal('productColor',     orderDetail.productColor     || '');
-  setVal('productCount',     orderDetail.productCount     || '');
+  setNum('productCount',     orderDetail.productCount     ?? '');
   setVal('productURL',       orderDetail.productURL       || '');
   setVal('productOrderDate', orderDetail.productOrderDate || '');
 
