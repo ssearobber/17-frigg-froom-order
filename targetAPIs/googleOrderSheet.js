@@ -3,6 +3,17 @@ const { shopifyOrderDetail } = require('./shopifyOrderDetail');
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+function colIndexToLetter(index) {
+  let letter = '';
+  let n = index + 1;
+  while (n > 0) {
+    const r = (n - 1) % 26;
+    letter = String.fromCharCode(65 + r) + letter;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letter;
+}
+
 // 컬럼 매핑 (0-indexed)
 const COL = {
   isCompleted:      0, // A열 — 체크박스
@@ -111,38 +122,43 @@ async function googleOrderSheet(orderID, orderName) {
   }
 }
 
-async function _saveCompletedCell(row, orderId) {
-  const sheetRow = row + 1;
-  await _orderSheet.loadCells(`A${sheetRow}:A${sheetRow}`);
-  const cell = _orderSheet.getCell(row, COL.isCompleted);
-  if (cell.value === true) return false; // 이미 완료
-  cell.value = true;
-  await _orderSheet.saveUpdatedCells();
-  console.log(`✅ ${sheetRow}행 완료 표시 (orderID: ${orderId})`);
-  return true;
-}
-
 async function markCompletedByOrderIds(shopifyOrderIds) {
   await _initOrderSheet();
   const idSet = new Set(shopifyOrderIds.map(String));
 
+  // 업데이트 대상 행 수집
+  const targets = [];
   for (const [orderId, row] of _orderRowMap) {
-    if (!idSet.has(orderId)) continue;
-    try {
-      await _saveCompletedCell(row, orderId);
-    } catch (error) {
-      if (error.response && error.response.status === 429) {
-        console.log(`할당량 초과, 10초 후 재시도: orderID ${orderId}`);
-        await delay(10000);
-        try {
-          await _saveCompletedCell(row, orderId);
-        } catch (retryError) {
-          console.error(`재시도 실패 (orderID: ${orderId}):`, retryError.message);
-        }
-      } else {
-        console.error(`완료 표시 실패 (orderID: ${orderId}):`, error.message);
-      }
-    }
+    if (idSet.has(orderId)) targets.push({ orderId, row });
+  }
+
+  if (targets.length === 0) {
+    console.log('완료 표시할 주문 없음');
+    return;
+  }
+
+  // isCompleted 열을 대상 범위만큼 한 번에 로드 (read 1회)
+  const minRow = Math.min(...targets.map(t => t.row));
+  const maxRow = Math.max(...targets.map(t => t.row));
+  const colLetter = colIndexToLetter(COL.isCompleted);
+  await _orderSheet.loadCells(`${colLetter}${minRow + 1}:${colLetter}${maxRow + 1}`);
+
+  // 메모리에서 전부 업데이트
+  let updatedCount = 0;
+  for (const { orderId, row } of targets) {
+    const cell = _orderSheet.getCell(row, COL.isCompleted);
+    if (cell.value === true) continue; // 이미 완료
+    cell.value = true;
+    updatedCount++;
+    console.log(`✅ ${row + 1}행 완료 표시 예정 (orderID: ${orderId})`);
+  }
+
+  // 한 번에 저장 (write 1회)
+  if (updatedCount > 0) {
+    await _orderSheet.saveUpdatedCells();
+    console.log(`✅ ${updatedCount}건 완료 표시 완료`);
+  } else {
+    console.log('새로 완료 표시할 주문 없음 (모두 이미 처리됨)');
   }
 }
 
