@@ -14,24 +14,10 @@ function colIndexToLetter(index) {
   return letter;
 }
 
-// 컬럼 매핑 (0-indexed)
-const COL = {
-  isCompleted:      0, // A열 — 체크박스
-  orderID:          1, // B열
-  '1acSku':         2, // C열
-  peculiarities:    3, // D열
-  productColor:     4, // E열
-  productCount:     5, // F열
-  productURL:       6, // G열
-  productOrderDate: 7, // H열
-};
-// 데이터 시작 행 (0-indexed): 시트 1행=헤더, 2행=네임행, 3행부터 데이터
-const FIRST_DATA_ROW = 2;
-
-let _orderSheet = null;
-let _existingOrderIDs = null;
-let _nextDataRow = null;
-let _orderRowMap = null; // orderID → row 인덱스(0-indexed)
+let _orderSheet        = null;
+let _orderRows         = null;    // getRows() 결과: [0]=한국어레이블행, [1~]=데이터
+let _orderRowMap       = null;    // orderID → _orderRows 인덱스(i)
+let _isCompletedColIdx = null;    // isCompleted 열 0-indexed 위치 (동적 감지)
 
 async function _initOrderSheet() {
   if (_orderSheet !== null) return;
@@ -49,44 +35,38 @@ async function _initOrderSheet() {
   await doc.loadInfo();
   _orderSheet = doc.sheetsById[process.env.GOOGLE_ORDER_SHEET_ID];
 
-  const lastRow = _orderSheet.rowCount;
-  // B열(orderID)만 스캔해서 기존 데이터 파악
-  await _orderSheet.loadCells(`B${FIRST_DATA_ROW + 1}:B${lastRow}`);
+  // getRows()는 시트 1행(영문헤더)을 컬럼명으로 취급
+  // _orderRows[0] = 한국어레이블행(시트 2행), _orderRows[1~] = 실제 데이터
+  _orderRows = await _orderSheet.getRows();
 
-  _existingOrderIDs = new Set();
+  // isCompleted 열 위치 동적 감지 — 열 삽입에 무관하게 동작
+  _isCompletedColIdx = _orderSheet.headerValues.indexOf('isCompleted');
+  if (_isCompletedColIdx === -1) throw new Error('isCompleted 컬럼을 시트 헤더에서 찾을 수 없습니다.');
+
   _orderRowMap = new Map();
-  _nextDataRow = FIRST_DATA_ROW;
-
-  for (let row = FIRST_DATA_ROW; row < lastRow; row++) {
-    const val = _orderSheet.getCell(row, COL.orderID).value;
-    if (val !== null && val !== undefined && val !== '') {
-      _existingOrderIDs.add(String(val));
-      _orderRowMap.set(String(val), row);
-      _nextDataRow = row + 1;
-    }
+  for (let i = 1; i < _orderRows.length; i++) {
+    const id = _orderRows[i].orderID;
+    if (id) _orderRowMap.set(String(id), i);
   }
-  console.log(`기존 주문 ${_existingOrderIDs.size}건 확인, 다음 기록 행: ${_nextDataRow + 1}행`);
+  console.log(`기존 주문 ${_orderRowMap.size}건 확인`);
 }
 
 async function _writeOrderRow(orderDetail) {
-  const row = _nextDataRow;
-  const sheetRow = row + 1; // 표시용 1-indexed
-
-  // 해당 행만 로드 후 셀 직접 지정
-  await _orderSheet.loadCells(`B${sheetRow}:H${sheetRow}`);
-
-  _orderSheet.getCell(row, COL.orderID).value          = String(orderDetail.orderID);
-  _orderSheet.getCell(row, COL['1acSku']).value         = orderDetail['1acSku'] || '';
-  _orderSheet.getCell(row, COL.peculiarities).value     = orderDetail.peculiarities || '';
-  _orderSheet.getCell(row, COL.productColor).value      = orderDetail.productColor || '';
-  _orderSheet.getCell(row, COL.productCount).value      = orderDetail.productCount || '';
-  _orderSheet.getCell(row, COL.productURL).value        = orderDetail.productURL || '';
-  _orderSheet.getCell(row, COL.productOrderDate).value  = orderDetail.productOrderDate || '';
-
-  await _orderSheet.saveUpdatedCells();
-  _existingOrderIDs.add(String(orderDetail.orderID));
-  _nextDataRow++;
-  console.log(`시트 ${sheetRow}행에 기록 완료: 주문 ID ${orderDetail.orderID}`);
+  for (let i = 1; i < _orderRows.length; i++) {
+    if (!_orderRows[i].orderID) {
+      _orderRows[i].orderID          = String(orderDetail.orderID);
+      _orderRows[i]['1acSku']        = orderDetail['1acSku']        || '';
+      _orderRows[i].peculiarities    = orderDetail.peculiarities    || '';
+      _orderRows[i].productColor     = orderDetail.productColor     || '';
+      _orderRows[i].productCount     = orderDetail.productCount     || '';
+      _orderRows[i].productURL       = orderDetail.productURL       || '';
+      _orderRows[i].productOrderDate = orderDetail.productOrderDate || '';
+      await _orderRows[i].save();
+      _orderRowMap.set(String(orderDetail.orderID), i);
+      console.log(`시트 ${i + 2}행에 기록 완료: 주문 ID ${orderDetail.orderID}`);
+      break;
+    }
+  }
 }
 
 async function googleOrderSheet(orderID, orderName) {
@@ -95,7 +75,7 @@ async function googleOrderSheet(orderID, orderName) {
 
     console.log(`Google Sheets 처리 시작: 주문 ID ${orderID}`);
 
-    if (_existingOrderIDs.has(String(orderID))) {
+    if (_orderRowMap.has(String(orderID))) {
       console.log(`이미 존재하는 주문, 스킵: ${orderID}`);
       return;
     }
@@ -126,7 +106,6 @@ async function markCompletedByOrderIds(shopifyOrderIds) {
   await _initOrderSheet();
   const idSet = new Set(shopifyOrderIds.map(String));
 
-  // 업데이트 대상 행 수집
   const targets = [];
   for (const [orderId, row] of _orderRowMap) {
     if (idSet.has(orderId)) targets.push({ orderId, row });
@@ -137,23 +116,22 @@ async function markCompletedByOrderIds(shopifyOrderIds) {
     return;
   }
 
-  // isCompleted 열을 대상 범위만큼 한 번에 로드 (read 1회)
-  const minRow = Math.min(...targets.map(t => t.row));
-  const maxRow = Math.max(...targets.map(t => t.row));
-  const colLetter = colIndexToLetter(COL.isCompleted);
-  await _orderSheet.loadCells(`${colLetter}${minRow + 1}:${colLetter}${maxRow + 1}`);
+  // _orderRows 인덱스(i) → 1-indexed 시트 행: i+2
+  const minSheetRow = Math.min(...targets.map(t => t.row)) + 2;
+  const maxSheetRow = Math.max(...targets.map(t => t.row)) + 2;
+  const colLetter = colIndexToLetter(_isCompletedColIdx);
+  await _orderSheet.loadCells(`${colLetter}${minSheetRow}:${colLetter}${maxSheetRow}`);
 
-  // 메모리에서 전부 업데이트
   let updatedCount = 0;
   for (const { orderId, row } of targets) {
-    const cell = _orderSheet.getCell(row, COL.isCompleted);
-    if (cell.value === true) continue; // 이미 완료
+    // _orderRows 인덱스(i) → 0-indexed 시트 행: i+1
+    const cell = _orderSheet.getCell(row + 1, _isCompletedColIdx);
+    if (cell.value === true) continue;
     cell.value = true;
     updatedCount++;
-    console.log(`✅ ${row + 1}행 완료 표시 예정 (orderID: ${orderId})`);
+    console.log(`✅ ${row + 2}행 완료 표시 예정 (orderID: ${orderId})`);
   }
 
-  // 한 번에 저장 (write 1회)
   if (updatedCount > 0) {
     await _orderSheet.saveUpdatedCells();
     console.log(`✅ ${updatedCount}건 완료 표시 완료`);
