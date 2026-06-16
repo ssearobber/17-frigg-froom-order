@@ -16,7 +16,9 @@ function colIndexToLetter(index) {
 
 let _orderSheet        = null;
 let _orderRows         = null;    // getRows() 결과: [0]=한국어레이블행, [1~]=데이터
-let _orderRowMap       = null;    // orderID → _orderRows 인덱스(i)
+let _orderRowMap       = null;    // orderID → 0-indexed 시트 행
+let _availableRows     = null;    // _orderRows 내 빈 행의 0-indexed 시트 행 큐
+let _nextAppendRow0    = null;    // _orderRows 범위 밖 추가 위치 (0-indexed)
 let _isCompletedColIdx = null;    // isCompleted 열 0-indexed 위치 (동적 감지)
 
 async function _initOrderSheet() {
@@ -39,34 +41,53 @@ async function _initOrderSheet() {
   // _orderRows[0] = 한국어레이블행(시트 2행), _orderRows[1~] = 실제 데이터
   _orderRows = await _orderSheet.getRows();
 
-  // isCompleted 열 위치 동적 감지 — 열 삽입에 무관하게 동작
   _isCompletedColIdx = _orderSheet.headerValues.indexOf('isCompleted');
   if (_isCompletedColIdx === -1) throw new Error('isCompleted 컬럼을 시트 헤더에서 찾을 수 없습니다.');
 
-  _orderRowMap = new Map();
+  _orderRowMap   = new Map();
+  _availableRows = [];
   for (let i = 1; i < _orderRows.length; i++) {
     const id = _orderRows[i].orderID;
-    if (id) _orderRowMap.set(String(id), i);
+    if (id) {
+      // 0-indexed 시트 행 저장 (_orderRows[i] ↔ 0-indexed i+1)
+      _orderRowMap.set(String(id), i + 1);
+    } else {
+      // orderID가 없는 빈 행 → 사용 가능 큐에 추가
+      _availableRows.push(i + 1);
+    }
   }
+  // _orderRows[N-1] ↔ 0-indexed N, 다음 행 = N+1
+  _nextAppendRow0 = _orderRows.length + 1;
   console.log(`기존 주문 ${_orderRowMap.size}건 확인`);
 }
 
 async function _writeOrderRow(orderDetail) {
-  for (let i = 1; i < _orderRows.length; i++) {
-    if (!_orderRows[i].orderID) {
-      _orderRows[i].orderID          = String(orderDetail.orderID);
-      _orderRows[i]['1acSku']        = orderDetail['1acSku']        || '';
-      _orderRows[i].peculiarities    = orderDetail.peculiarities    || '';
-      _orderRows[i].productColor     = orderDetail.productColor     || '';
-      _orderRows[i].productCount     = orderDetail.productCount     || '';
-      _orderRows[i].productURL       = orderDetail.productURL       || '';
-      _orderRows[i].productOrderDate = orderDetail.productOrderDate || '';
-      await _orderRows[i].save();
-      _orderRowMap.set(String(orderDetail.orderID), i);
-      console.log(`시트 ${i + 2}행에 기록 완료: 주문 ID ${orderDetail.orderID}`);
-      break;
-    }
-  }
+  // 빈 행 우선 사용 → 없으면 _orderRows 범위 밖 행에 추가
+  const targetRow0 = _availableRows.length > 0
+    ? _availableRows.shift()
+    : _nextAppendRow0++;
+  const targetRow1 = targetRow0 + 1; // 1-indexed (loadCells 범위용)
+
+  const lastColLetter = colIndexToLetter(_orderSheet.headerValues.length - 1);
+  await _orderSheet.loadCells(`A${targetRow1}:${lastColLetter}${targetRow1}`);
+
+  // 헤더명으로 열 인덱스를 취득해 값만 설정 (포맷 유지)
+  const setVal = (name, value) => {
+    const idx = _orderSheet.headerValues.indexOf(name);
+    if (idx !== -1) _orderSheet.getCell(targetRow0, idx).value = value ?? '';
+  };
+
+  setVal('orderID',          String(orderDetail.orderID));
+  setVal('1acSku',           orderDetail['1acSku']        || '');
+  setVal('peculiarities',    orderDetail.peculiarities    || '');
+  setVal('productColor',     orderDetail.productColor     || '');
+  setVal('productCount',     orderDetail.productCount     || '');
+  setVal('productURL',       orderDetail.productURL       || '');
+  setVal('productOrderDate', orderDetail.productOrderDate || '');
+
+  await _orderSheet.saveUpdatedCells();
+  _orderRowMap.set(String(orderDetail.orderID), targetRow0);
+  console.log(`시트 ${targetRow1}행에 기록 완료: 주문 ID ${orderDetail.orderID}`);
 }
 
 async function googleOrderSheet(orderID, orderName) {
@@ -116,20 +137,19 @@ async function markCompletedByOrderIds(shopifyOrderIds) {
     return;
   }
 
-  // _orderRows 인덱스(i) → 1-indexed 시트 행: i+2
-  const minSheetRow = Math.min(...targets.map(t => t.row)) + 2;
-  const maxSheetRow = Math.max(...targets.map(t => t.row)) + 2;
+  // row = 0-indexed → 1-indexed = row+1
+  const minSheetRow = Math.min(...targets.map(t => t.row)) + 1;
+  const maxSheetRow = Math.max(...targets.map(t => t.row)) + 1;
   const colLetter = colIndexToLetter(_isCompletedColIdx);
   await _orderSheet.loadCells(`${colLetter}${minSheetRow}:${colLetter}${maxSheetRow}`);
 
   let updatedCount = 0;
   for (const { orderId, row } of targets) {
-    // _orderRows 인덱스(i) → 0-indexed 시트 행: i+1
-    const cell = _orderSheet.getCell(row + 1, _isCompletedColIdx);
+    const cell = _orderSheet.getCell(row, _isCompletedColIdx);
     if (cell.value === true) continue;
     cell.value = true;
     updatedCount++;
-    console.log(`✅ ${row + 2}행 완료 표시 예정 (orderID: ${orderId})`);
+    console.log(`✅ ${row + 1}행 완료 표시 예정 (orderID: ${orderId})`);
   }
 
   if (updatedCount > 0) {
