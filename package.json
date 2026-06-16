@@ -19,5 +19,9 @@
     "qs": "^6.11.2"
   },
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "undici-types": "^8.5.0"
+  }
 }
