@@ -1,5 +1,6 @@
 const { shopifyOrderIdObject } = require('./targetAPIs/shopifyOrderList');
-const { googleOrderSheet } = require('./targetAPIs/googleOrderSheet');
+const { googleOrderSheet, markCompletedByOrderIds } = require('./targetAPIs/googleOrderSheet');
+const { getNotifiedShopifyOrderIds } = require('./targetAPIs/swooDb');
 require('dotenv').config();
 
 // 비동기용 asyncForEach 함수 생성
@@ -41,6 +42,12 @@ async function main() {
     }
 
     console.log('모든 주문 처리가 완료되었습니다.');
+
+    console.log('isCompleted 동기화 시작...');
+    const notifiedIds = await getNotifiedShopifyOrderIds();
+    console.log(`발송 완료 주문 ${notifiedIds.length}건`);
+    await markCompletedByOrderIds(notifiedIds);
+    console.log('isCompleted 동기화 완료');
   } catch (error) {
     console.error('오류 발생:', error.message);
     console.error('상세 오류:', error);

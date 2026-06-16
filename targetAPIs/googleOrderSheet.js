@@ -5,6 +5,7 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // 컬럼 매핑 (0-indexed)
 const COL = {
+  isCompleted:      0, // A열 — 체크박스
   orderID:          1, // B열
   '1acSku':         2, // C열
   peculiarities:    3, // D열
@@ -19,6 +20,7 @@ const FIRST_DATA_ROW = 2;
 let _orderSheet = null;
 let _existingOrderIDs = null;
 let _nextDataRow = null;
+let _orderRowMap = null; // orderID → row 인덱스(0-indexed)
 
 async function _initOrderSheet() {
   if (_orderSheet !== null) return;
@@ -41,12 +43,14 @@ async function _initOrderSheet() {
   await _orderSheet.loadCells(`B${FIRST_DATA_ROW + 1}:B${lastRow}`);
 
   _existingOrderIDs = new Set();
+  _orderRowMap = new Map();
   _nextDataRow = FIRST_DATA_ROW;
 
   for (let row = FIRST_DATA_ROW; row < lastRow; row++) {
     const val = _orderSheet.getCell(row, COL.orderID).value;
     if (val !== null && val !== undefined && val !== '') {
       _existingOrderIDs.add(String(val));
+      _orderRowMap.set(String(val), row);
       _nextDataRow = row + 1;
     }
   }
@@ -107,4 +111,40 @@ async function googleOrderSheet(orderID, orderName) {
   }
 }
 
+async function _saveCompletedCell(row, orderId) {
+  const sheetRow = row + 1;
+  await _orderSheet.loadCells(`A${sheetRow}:A${sheetRow}`);
+  const cell = _orderSheet.getCell(row, COL.isCompleted);
+  if (cell.value === true) return false; // 이미 완료
+  cell.value = true;
+  await _orderSheet.saveUpdatedCells();
+  console.log(`✅ ${sheetRow}행 완료 표시 (orderID: ${orderId})`);
+  return true;
+}
+
+async function markCompletedByOrderIds(shopifyOrderIds) {
+  await _initOrderSheet();
+  const idSet = new Set(shopifyOrderIds.map(String));
+
+  for (const [orderId, row] of _orderRowMap) {
+    if (!idSet.has(orderId)) continue;
+    try {
+      await _saveCompletedCell(row, orderId);
+    } catch (error) {
+      if (error.response && error.response.status === 429) {
+        console.log(`할당량 초과, 10초 후 재시도: orderID ${orderId}`);
+        await delay(10000);
+        try {
+          await _saveCompletedCell(row, orderId);
+        } catch (retryError) {
+          console.error(`재시도 실패 (orderID: ${orderId}):`, retryError.message);
+        }
+      } else {
+        console.error(`완료 표시 실패 (orderID: ${orderId}):`, error.message);
+      }
+    }
+  }
+}
+
 module.exports.googleOrderSheet = googleOrderSheet;
+module.exports.markCompletedByOrderIds = markCompletedByOrderIds;
