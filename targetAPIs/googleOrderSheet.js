@@ -77,11 +77,14 @@ async function _writeOrderRow(orderDetail) {
     if (idx !== -1) _orderSheet.getCell(targetRow0, idx).value = value ?? '';
   };
   // 숫자형 필드: string으로 넣으면 Sheets가 ' apostrophe prefix를 붙이므로 Number로 변환
-  const setNum = (name, value) => {
+  // horizontalAlignment도 같이 지정해 숫자로 바뀌어도 정렬이 유지되도록 함
+  const setNum = (name, value, align = 'CENTER') => {
     const idx = _orderSheet.headerValues.indexOf(name);
     if (idx === -1) return;
     const num = Number(value);
-    _orderSheet.getCell(targetRow0, idx).value = value !== '' && value != null && !isNaN(num) ? num : (value ?? '');
+    const cell = _orderSheet.getCell(targetRow0, idx);
+    cell.value = value !== '' && value != null && !isNaN(num) ? num : (value ?? '');
+    cell.horizontalAlignment = align;
   };
 
   setVal('orderID',          String(orderDetail.orderID));
