@@ -16,7 +16,7 @@ function colIndexToLetter(index) {
 
 let _orderSheet        = null;
 let _orderRows         = null;    // getRows() 결과: [0]=한국어레이블행, [1~]=데이터
-let _orderRowMap       = null;    // orderID → 0-indexed 시트 행
+let _orderRowMap       = null;    // orderID → 0-indexed 시트 행 배열 (주문당 상품 여러 개 → 행 여러 개)
 let _availableRows     = null;    // _orderRows 내 빈 행의 0-indexed 시트 행 큐
 let _nextAppendRow0    = null;    // _orderRows 범위 밖 추가 위치 (0-indexed)
 let _isCompletedColIdx = null;    // isCompleted 열 0-indexed 위치 (동적 감지)
@@ -50,7 +50,14 @@ async function _initOrderSheet() {
     const id = _orderRows[i].orderID;
     if (id) {
       // 0-indexed 시트 행 저장 (_orderRows[i] ↔ 0-indexed i+1)
-      _orderRowMap.set(String(id), i + 1);
+      // 같은 orderID가 여러 행(상품 여러 개)에 걸쳐 있을 수 있으므로 배열에 누적
+      const key = String(id);
+      const row = i + 1;
+      if (_orderRowMap.has(key)) {
+        _orderRowMap.get(key).push(row);
+      } else {
+        _orderRowMap.set(key, [row]);
+      }
     } else {
       // orderID가 없는 빈 행 → 사용 가능 큐에 추가
       _availableRows.push(i + 1);
@@ -96,7 +103,12 @@ async function _writeOrderRow(orderDetail) {
   setVal('productOrderDate', orderDetail.productOrderDate || '');
 
   await _orderSheet.saveUpdatedCells();
-  _orderRowMap.set(String(orderDetail.orderID), targetRow0);
+  const key = String(orderDetail.orderID);
+  if (_orderRowMap.has(key)) {
+    _orderRowMap.get(key).push(targetRow0);
+  } else {
+    _orderRowMap.set(key, [targetRow0]);
+  }
   console.log(`시트 ${targetRow1}행에 기록 완료: 주문 ID ${orderDetail.orderID}`);
 }
 
@@ -138,8 +150,10 @@ async function markCompletedByOrderIds(shopifyOrderIds) {
   const idSet = new Set(shopifyOrderIds.map(String));
 
   const targets = [];
-  for (const [orderId, row] of _orderRowMap) {
-    if (idSet.has(orderId)) targets.push({ orderId, row });
+  for (const [orderId, rows] of _orderRowMap) {
+    if (idSet.has(orderId)) {
+      for (const row of rows) targets.push({ orderId, row });
+    }
   }
 
   if (targets.length === 0) {
