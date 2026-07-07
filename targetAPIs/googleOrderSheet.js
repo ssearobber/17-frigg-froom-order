@@ -16,10 +16,21 @@ function colIndexToLetter(index) {
 
 let _orderSheet        = null;
 let _orderRows         = null;    // getRows() 결과: [0]=한국어레이블행, [1~]=데이터
-let _orderRowMap       = null;    // orderID → 0-indexed 시트 행 배열 (주문당 상품 여러 개 → 행 여러 개)
+let _orderIdSet        = null;    // 이미 시트에 기록된 orderID 집합 (주문 단위 중복 기록 방지용)
+let _orderRowMap       = null;    // "orderID_lineItemId" 복합키 → 0-indexed 시트 행 배열 (상품별 구분)
 let _availableRows     = null;    // _orderRows 내 빈 행의 0-indexed 시트 행 큐
 let _nextAppendRow0    = null;    // _orderRows 범위 밖 추가 위치 (0-indexed)
 let _isCompletedColIdx = null;    // isCompleted 열 0-indexed 위치 (동적 감지)
+let _lineItemIdColIdx  = null;    // lineItemId 열 0-indexed 위치
+
+function _rowKey(orderID, lineItemId) {
+  return `${orderID}_${lineItemId || ''}`;
+}
+
+function _splitKey(key) {
+  const idx = key.indexOf('_');
+  return { orderId: key.slice(0, idx), lineItemId: key.slice(idx + 1) };
+}
 
 async function _initOrderSheet() {
   if (_orderSheet !== null) return;
@@ -44,15 +55,21 @@ async function _initOrderSheet() {
   _isCompletedColIdx = _orderSheet.headerValues.indexOf('isCompleted');
   if (_isCompletedColIdx === -1) throw new Error('isCompleted 컬럼을 시트 헤더에서 찾을 수 없습니다.');
 
+  _lineItemIdColIdx = _orderSheet.headerValues.indexOf('lineItemId');
+  if (_lineItemIdColIdx === -1) throw new Error('lineItemId 컬럼을 시트 헤더에서 찾을 수 없습니다.');
+
+  _orderIdSet    = new Set();
   _orderRowMap   = new Map();
   _availableRows = [];
   for (let i = 1; i < _orderRows.length; i++) {
     const id = _orderRows[i].orderID;
     if (id) {
       // 0-indexed 시트 행 저장 (_orderRows[i] ↔ 0-indexed i+1)
-      // 같은 orderID가 여러 행(상품 여러 개)에 걸쳐 있을 수 있으므로 배열에 누적
-      const key = String(id);
+      // 같은 orderID가 여러 행(상품 여러 개)에 걸쳐 있을 수 있으므로 orderID_lineItemId 복합키로 구분해 누적
+      const orderId = String(id);
+      const key = _rowKey(orderId, _orderRows[i].lineItemId);
       const row = i + 1;
+      _orderIdSet.add(orderId);
       if (_orderRowMap.has(key)) {
         _orderRowMap.get(key).push(row);
       } else {
@@ -95,6 +112,7 @@ async function _writeOrderRow(orderDetail) {
   };
 
   setVal('orderID',          String(orderDetail.orderID));
+  setVal('lineItemId',       String(orderDetail.lineItemId ?? ''));
   setVal('1acSku',           orderDetail['1acSku']        || '');
   setVal('peculiarities',    orderDetail.peculiarities    || '');
   setVal('productColor',     orderDetail.productColor     || '');
@@ -103,13 +121,15 @@ async function _writeOrderRow(orderDetail) {
   setVal('productOrderDate', orderDetail.productOrderDate || '');
 
   await _orderSheet.saveUpdatedCells();
-  const key = String(orderDetail.orderID);
+  const orderId = String(orderDetail.orderID);
+  const key = _rowKey(orderId, orderDetail.lineItemId);
+  _orderIdSet.add(orderId);
   if (_orderRowMap.has(key)) {
     _orderRowMap.get(key).push(targetRow0);
   } else {
     _orderRowMap.set(key, [targetRow0]);
   }
-  console.log(`시트 ${targetRow1}행에 기록 완료: 주문 ID ${orderDetail.orderID}`);
+  console.log(`시트 ${targetRow1}행에 기록 완료: 주문 ID ${orderDetail.orderID}, lineItemId: ${orderDetail.lineItemId ?? ''}`);
 }
 
 async function googleOrderSheet(orderID, orderName) {
@@ -118,7 +138,7 @@ async function googleOrderSheet(orderID, orderName) {
 
     console.log(`Google Sheets 처리 시작: 주문 ID ${orderID}`);
 
-    if (_orderRowMap.has(String(orderID))) {
+    if (_orderIdSet.has(String(orderID))) {
       console.log(`이미 존재하는 주문, 스킵: ${orderID}`);
       return;
     }
@@ -145,14 +165,20 @@ async function googleOrderSheet(orderID, orderName) {
   }
 }
 
-async function markCompletedByOrderIds(shopifyOrderIds) {
+async function markCompletedByKeys(orderItemKeys) {
   await _initOrderSheet();
-  const idSet = new Set(shopifyOrderIds.map(String));
+  const idSet = new Set(orderItemKeys.map(String));
+
+  // lineItemId가 비어있는 예전 방식 행(마이그레이션 이전 기록)은 orderID 단위로라도 매칭되도록 폴백
+  // (해당 주문의 라인아이템 중 하나라도 발송완료면 그 주문의 예전 행 전체를 완료 처리 — 기존 동작과 동일)
+  const legacyOrderIdSet = new Set(orderItemKeys.map(k => _splitKey(String(k)).orderId));
 
   const targets = [];
-  for (const [orderId, rows] of _orderRowMap) {
-    if (idSet.has(orderId)) {
-      for (const row of rows) targets.push({ orderId, row });
+  for (const [key, rows] of _orderRowMap) {
+    const { orderId, lineItemId } = _splitKey(key);
+    const matched = lineItemId ? idSet.has(key) : legacyOrderIdSet.has(orderId);
+    if (matched) {
+      for (const row of rows) targets.push({ orderId, lineItemId, row });
     }
   }
 
@@ -168,12 +194,12 @@ async function markCompletedByOrderIds(shopifyOrderIds) {
   await _orderSheet.loadCells(`${colLetter}${minSheetRow}:${colLetter}${maxSheetRow}`);
 
   let updatedCount = 0;
-  for (const { orderId, row } of targets) {
+  for (const { orderId, lineItemId, row } of targets) {
     const cell = _orderSheet.getCell(row, _isCompletedColIdx);
     if (cell.value === true) continue;
     cell.value = true;
     updatedCount++;
-    console.log(`✅ ${row + 1}행 완료 표시 예정 (orderID: ${orderId})`);
+    console.log(`✅ ${row + 1}행 완료 표시 예정 (orderID: ${orderId}, lineItemId: ${lineItemId})`);
   }
 
   if (updatedCount > 0) {
@@ -185,4 +211,4 @@ async function markCompletedByOrderIds(shopifyOrderIds) {
 }
 
 module.exports.googleOrderSheet = googleOrderSheet;
-module.exports.markCompletedByOrderIds = markCompletedByOrderIds;
+module.exports.markCompletedByKeys = markCompletedByKeys;

@@ -21,6 +21,7 @@ async function shopifyOrderDetail(orderID) {
 
           let orderDetailObject = {
             orderID: orderID,
+            lineItemId: item.line_items[i].id,
             productOrderDate: removeAfterT(item.created_at),
             productId: item.line_items[i].product_id,
             productCount: item.line_items[i].quantity,
