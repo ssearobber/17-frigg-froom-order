@@ -24,7 +24,9 @@ async function googleProfitSheet(productId) {
   for (i = 1; i < _profitRows.length; i++) {
     if (!_profitRows[i].shopifyProductId) continue;
     // 해당 상품ID가 존재하는 row
-    if (_profitRows[i].shopifyProductId.match(/\d{13}/g) == productId) {
+    // Shopify 상품 ID가 14자리 이상으로 늘어났으므로 13자리 고정 매칭 대신 13자리 이상 숫자열을 모두 추출해 정확 비교한다
+    const sheetProductIds = _profitRows[i].shopifyProductId.match(/\d{13,}/g) || [];
+    if (sheetProductIds.includes(String(productId))) {
       googleProfitObject.rowNum = i + 2;
       googleProfitObject['1acSku'] = _profitRows[i]['1acSku'];
       googleProfitObject.peculiarities = _profitRows[i].peculiarities;
@@ -37,6 +39,11 @@ async function googleProfitSheet(productId) {
       console.log(`- shopifyProfitRate 원본 값:`, _profitRows[i].shopifyProfitRate);
       console.log(`- shopifyProfitRate 타입:`, typeof _profitRows[i].shopifyProfitRate);
     }
+  }
+
+  // 매칭 실패 시 빈 값으로 기록되므로 원인 추적을 위해 경고 로그를 남긴다
+  if (googleProfitObject.rowNum === undefined) {
+    console.warn(`⚠️ 利益計算 시트에서 상품 ID ${productId}를 찾지 못했습니다.`);
   }
 
   return googleProfitObject;
